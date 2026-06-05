@@ -24,13 +24,13 @@ TEMPLATE_COLUMNS = [
 FIXED_COLUMNS = {
     "timezone": "America/Belem",
     "priority": 5,
-    "concessionaria": "CORSAN",
 }
 
-# Colunas disponíveis para mapeamento (excluindo as fixas e a coluna 'dados' para tratamento especial)
-# A coluna 'dados' será tratada separadamente para permitir múltiplos mapeamentos.
-MAPPABLE_SINGLE_COLUMNS = [col for col in TEMPLATE_COLUMNS if col not in FIXED_COLUMNS and col != "dados"]
-
+# Colunas disponíveis para mapeamento (excluindo as fixas, 'dados' e 'concessionaria')
+MAPPABLE_SINGLE_COLUMNS = [
+    col for col in TEMPLATE_COLUMNS 
+    if col not in FIXED_COLUMNS and col not in ["dados", "concessionaria"]
+]
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 def load_file(uploaded_file) -> pd.DataFrame | None:
@@ -49,22 +49,23 @@ def load_file(uploaded_file) -> pd.DataFrame | None:
         st.error(f"Erro ao ler o arquivo: {e}")
         return None
 
-
 def build_output(
     source_df: pd.DataFrame,
     single_mapping: dict[str, str],
-    multi_mapping_dados: list[str]
+    multi_mapping_dados: list[str],
+    concessionaria_selecionada: str
 ) -> pd.DataFrame:
     """
     Constrói o DataFrame de saída com todas as colunas do template.
-    - single_mapping: {coluna_template -> coluna_origem} para mapeamentos 1:1
-    - multi_mapping_dados: [coluna_origem_1, coluna_origem_2, ...] para a coluna 'dados'
     """
     out = pd.DataFrame(index=range(len(source_df)), columns=TEMPLATE_COLUMNS)
 
     # Aplica valores fixos
     for col, val in FIXED_COLUMNS.items():
         out[col] = val
+
+    # Aplica o valor escolhido para a concessionária
+    out["concessionaria"] = concessionaria_selecionada
 
     # Aplica mapeamento do usuário para colunas 1:1
     for template_col, source_col in single_mapping.items():
@@ -73,18 +74,14 @@ def build_output(
 
     # Aplica mapeamento para a coluna 'dados' (múltiplas colunas de origem)
     if "dados" in TEMPLATE_COLUMNS and multi_mapping_dados:
-        # Filtra colunas que foram realmente selecionadas e existem no source_df
         selected_source_cols = [col for col in multi_mapping_dados if col in source_df.columns]
 
         if selected_source_cols:
-            # Converte todas as colunas selecionadas para string e concatena com ';'
-            # Preenche NaN com string vazia antes de concatenar para evitar 'nan;valor'
             out["dados"] = source_df[selected_source_cols].fillna('').astype(str).agg(';'.join, axis=1)
         else:
-            out["dados"] = None # Ou uma string vazia, dependendo da sua preferência
+            out["dados"] = None 
 
     return out
-
 
 def to_excel_bytes(df: pd.DataFrame) -> bytes:
     """Converte o DataFrame para bytes de um XLSX estilizado."""
@@ -121,7 +118,8 @@ def to_excel_bytes(df: pd.DataFrame) -> bytes:
             cell.border = border
             cell.alignment = Alignment(vertical="center")
 
-            if col in FIXED_COLUMNS:
+            # Pinta de verde as colunas fixas e a concessionária escolhida
+            if col in FIXED_COLUMNS or col == "concessionaria":
                 cell.fill = fixed_fill
             elif val and str(val).strip():
                 cell.fill = mapped_fill
@@ -135,10 +133,19 @@ def to_excel_bytes(df: pd.DataFrame) -> bytes:
     buf.seek(0)
     return buf.getvalue()
 
-
 # ── Interface ────────────────────────────────────────────────────────────────
 st.title("📋 Populador de Campanha CORSAN")
 st.caption("Faça upload de qualquer planilha e mapeie as colunas para o template padrão.")
+
+st.divider()
+
+# Configuração da Fila (Concessionária)
+st.subheader("⚙️ Configuração da Fila")
+concessionaria_selecionada = st.radio(
+    "Fila que será utilizada:",
+    options=["CORSAN", "CORSAN_2", "CORSAN_3"],
+    horizontal=True
+)
 
 st.divider()
 
@@ -147,6 +154,7 @@ with st.expander("ℹ️ Colunas preenchidas automaticamente", expanded=False):
     cols_info = st.columns(3)
     for i, (col, val) in enumerate(FIXED_COLUMNS.items()):
         cols_info[i].metric(label=col, value=str(val))
+    cols_info[2].metric(label="concessionaria", value=concessionaria_selecionada)
 
 st.divider()
 
@@ -174,15 +182,13 @@ if uploaded:
         )
 
         source_options = ["— não mapear —"] + list(source_df.columns)
-        source_options_for_multi = list(source_df.columns) # Para multiselect, não precisa de "não mapear"
+        source_options_for_multi = list(source_df.columns)
 
-        # Tenta sugerir mapeamento automático por nome exato (case-insensitive)
         source_lower = {c.lower(): c for c in source_df.columns}
 
         single_mapping: dict[str, str] = {}
         multi_mapping_dados: list[str] = []
 
-        # Divide em duas colunas de selects para os mapeamentos 1:1
         left_cols = MAPPABLE_SINGLE_COLUMNS[: len(MAPPABLE_SINGLE_COLUMNS) // 2 + len(MAPPABLE_SINGLE_COLUMNS) % 2]
         right_cols = MAPPABLE_SINGLE_COLUMNS[len(MAPPABLE_SINGLE_COLUMNS) // 2 + len(MAPPABLE_SINGLE_COLUMNS) % 2 :]
 
@@ -206,7 +212,7 @@ if uploaded:
                 key=f"map_{col}",
             )
 
-        st.markdown("---") # Separador visual para a coluna 'dados'
+        st.markdown("---") 
         st.subheader("Configuração da coluna 'dados'")
         st.caption("Selecione as colunas do arquivo de origem que deseja concatenar na coluna 'dados' do template, separadas por ';'.")
         multi_mapping_dados = st.multiselect(
@@ -216,17 +222,14 @@ if uploaded:
             help="Selecione uma ou mais colunas do arquivo de origem. Os valores serão unidos por ';'."
         )
 
-
         st.divider()
 
         # Botão para pré-visualizar e aplicar a lógica de duplicidade
         if st.button("🔍 Pré-visualizar resultado e remover duplicidades", use_container_width=True):
-            output_df = build_output(source_df, single_mapping, multi_mapping_dados)
+            output_df = build_output(source_df, single_mapping, multi_mapping_dados, concessionaria_selecionada)
 
-            # --- Lógica para remover duplicidades em 'Tel1' ---
             if "Tel1" in output_df.columns:
                 initial_rows = len(output_df)
-                # Garante que 'Tel1' é string e remove espaços em branco antes de verificar duplicidade
                 output_df['Tel1'] = output_df['Tel1'].astype(str).str.strip()
                 output_df_cleaned = output_df.drop_duplicates(subset=['Tel1'], keep='first')
                 removed_duplicates = initial_rows - len(output_df_cleaned)
@@ -238,22 +241,20 @@ if uploaded:
                     st.info("✅ Nenhuma duplicidade encontrada na coluna 'Tel1'.")
             else:
                 st.warning("Coluna 'Tel1' não encontrada no template de saída para verificação de duplicidades.")
-            # --- Fim da lógica de duplicidade ---
 
             st.subheader("📊 Prévia do arquivo de saída (primeiras 10 linhas)")
             st.dataframe(output_df.head(10), use_container_width=True)
-            st.session_state["output_df"] = output_df # Salva o DF já limpo
+            st.session_state["output_df"] = output_df 
 
         # Gerar e baixar
         st.divider()
         if st.button("⚙️ Gerar arquivo XLSX", type="primary", use_container_width=True):
-            # Se o usuário já pré-visualizou, usamos o DF da session_state
-            # Caso contrário, construímos e limpamos novamente
             if "output_df" in st.session_state:
                 output_df = st.session_state["output_df"]
+                # Atualiza a concessionária caso o usuário tenha mudado a opção após a pré-visualização
+                output_df["concessionaria"] = concessionaria_selecionada
             else:
-                output_df = build_output(source_df, single_mapping, multi_mapping_dados)
-                # --- Lógica para remover duplicidades em 'Tel1' (repetida para garantir se não houve pré-visualização) ---
+                output_df = build_output(source_df, single_mapping, multi_mapping_dados, concessionaria_selecionada)
                 if "Tel1" in output_df.columns:
                     initial_rows = len(output_df)
                     output_df['Tel1'] = output_df['Tel1'].astype(str).str.strip()
@@ -266,8 +267,7 @@ if uploaded:
                         st.info("✅ Nenhuma duplicidade encontrada na coluna 'Tel1' durante a geração do arquivo.")
                 else:
                     st.warning("Coluna 'Tel1' não encontrada no template de saída para verificação de duplicidades durante a geração do arquivo.")
-                # --- Fim da lógica de duplicidade ---
-                st.session_state["output_df"] = output_df # Salva o DF limpo na session_state
+                st.session_state["output_df"] = output_df 
 
             xlsx_bytes = to_excel_bytes(output_df)
             st.session_state["xlsx_bytes"] = xlsx_bytes
