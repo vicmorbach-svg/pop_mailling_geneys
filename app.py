@@ -77,7 +77,7 @@ def build_output(
         selected_source_cols = [col for col in multi_mapping_dados if col in source_df.columns]
 
         if selected_source_cols:
-            out["dados"] = source_df[selected_source_cols].fillna('').astype(str).agg(';'.join, axis=1)
+            out["dados"] = source_df[selected_source_cols].fillna('').astype(str).agg('\n'.join, axis=1)
         else:
             out["dados"] = None 
 
@@ -116,7 +116,7 @@ def to_excel_bytes(df: pd.DataFrame) -> bytes:
         for c_idx, (col, val) in enumerate(zip(df.columns, row), start=1):
             cell = ws.cell(row=r_idx, column=c_idx, value=val if pd.notna(val) else None)
             cell.border = border
-            cell.alignment = Alignment(vertical="center")
+            cell.alignment = Alignment(vertical="center", wrap_text=True)
 
             # Pinta de verde as colunas fixas e a concessionária escolhida
             if col in FIXED_COLUMNS or col == "concessionaria":
@@ -214,12 +214,12 @@ if uploaded:
 
         st.markdown("---") 
         st.subheader("Configuração da coluna 'dados'")
-        st.caption("Selecione as colunas do arquivo de origem que deseja concatenar na coluna 'dados' do template, separadas por ';'.")
+        st.caption("Selecione as colunas do arquivo de origem que deseja concatenar na coluna 'dados' do template, separadas por quebra de linha.")
         multi_mapping_dados = st.multiselect(
             "template: **dados**",
             options=source_options_for_multi,
             key="map_dados_multi",
-            help="Selecione uma ou mais colunas do arquivo de origem. Os valores serão unidos por ';'."
+            help="Selecione uma ou mais colunas do arquivo de origem. Os valores ficarão um embaixo do outro na mesma célula."
         )
 
         st.divider()
