@@ -143,7 +143,7 @@ st.divider()
 st.subheader("⚙️ Configuração da Fila")
 concessionaria_selecionada = st.radio(
     "Fila que será utilizada:",
-    options=["CORSAN", "CORSAN_2", "CORSAN_3"],
+    options=["CORSAN", "CORSAN_2", "CORSAN_3", "CORSAN_4", "CORSAN_5", "CORSAN_6"],
     horizontal=True
 )
 
